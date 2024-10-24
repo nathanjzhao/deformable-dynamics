@@ -5,7 +5,7 @@ if DEBUG:
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 import hydra
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from omegaconf.dictconfig import DictConfig
 OmegaConf.register_new_resolver("eval", eval)
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -21,16 +21,36 @@ import taichi as ti
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import pickle
+import objaverse.xl as oxl  # Add this import
+import trimesh
+import requests
+import time
 
 
 class GenerationWorkspace:
 
     def __init__(self, cfg: OmegaConf):
-        OmegaConf.resolve(cfg)
-        self.cfg = dict_str_to_tuple(cfg)
+        OmegaConf.resolve(cfg) # resolve .yaml
+        self.cfg = dict_str_to_tuple(cfg) # convert to tuple
+        
+        # Initialize attributes
+        self.cam = None
+        self.scene = None
+        self.entities = None
+        self.planner = None
+        self.topology = None
+        self.goals = None
+        self.init_state = None
+        self.scene_dir = None
+        self.objaverse_annotations = None
+
+        self.use_objaverse = 'entities' in cfg and 'objaverse_object' in cfg.entities
+
+        # Initialize Objaverse
+        if self.use_objaverse:
+            self.initialize_objaverse()
 
         # get scene
-        self.cam = None
         self.scene, self.cam, self.entities, self.planner = get_scene(self.cfg)
         if self.cfg.render:
             ti.set_logging_level(ti.WARN)
@@ -38,14 +58,8 @@ class GenerationWorkspace:
         # get topology
         if self.cfg.check.horizon > 0:
             self.topology = Topology(self.cfg, self.scene, self.planner, self.entities)
-        else:
-            self.topology = None
         # get plan
         self.goals = ActionFactory.get_goals(self.cfg.actions)
-
-        # set by reset()
-        self.init_state = None
-        self.scene_dir = None
 
         us.logger.info(f'=== Creating sequence {cfg.scene_id} in {cfg.log.base_dir} ===')
 
@@ -54,12 +68,13 @@ class GenerationWorkspace:
         return HydraConfig.get().runtime.output_dir
 
     def __del__(self):
-        if self.cam is not None:
+        if hasattr(self, 'cam') and self.cam is not None:
             self.cam.window.destroy()
         us.us_exit()
 
     def reset(self):
         # get scene dir
+
         if self.cfg.log.base_dir is None:
             us.logger.error('No log.base_dir specified. Adapt the config file.')
             sys.exit(-1)
@@ -188,21 +203,39 @@ class GenerationWorkspace:
 
         logs = []
         frames = []
-        self.goals[-1]['wait_after'] = self.cfg.log.wait_after_done
-        for step in range(self.cfg.max_horizon):
-            # if plan is not done, step state machine and set new ee velocities
-            if self.planner.step(self.goals):
-                break
-            # step simulation
-            self.scene.step()
+        
+        num_grasps = 1  # Number of random grasps to attempt
+        
+        for grasp_attempt in range(num_grasps):
+            # Generate a random pose
+            random_pose = self.generate_random_pose()
+            
+            # Update the grasp action with the random pose
+            self.goals[0]['to_pos'] = random_pose[:3]
+            self.goals[0]['to_quat'] = random_pose[3:]
+            self.goals[0]['init_d'] = 1.5  # Start with open gripper
+            self.goals[0]['close_d'] = 0.0  # Fully close the gripper
+            
+            # Reset the simulation for each grasp attempt
+            self.reset()
+            
+            for step in range(self.cfg.max_horizon):
+                # if plan is not done, step state machine and set new ee velocities
+                if self.planner.step(self.goals):
+                    break
+                # step simulation
+                self.scene.step()
 
-            # check and log step
-            keyframe, log = self.check_and_log(step)
-            if keyframe is not None:
-                frames += [keyframe]
-            if log is not None:
-                logs += [log]
-        us.logger.info(f'=== Done simulating sequence {self.cfg.scene_id} ===')
+                # check and log step
+                keyframe, log = self.check_and_log(step)
+                if keyframe is not None:
+                    frames += [keyframe]
+                if log is not None:
+                    logs += [log]
+            
+            us.logger.info(f'=== Completed grasp attempt {grasp_attempt + 1}/{num_grasps} ===')
+
+        us.logger.info(f'=== Done simulating all grasps for sequence {self.cfg.scene_id} ===')
 
         us.logger.info(f'Saving logs.')
         path = os.path.join(self.scene_dir, "log.pkl")
@@ -213,6 +246,98 @@ class GenerationWorkspace:
                         format="GIF", append_images=frames[1:], save_all=True, loop=0,
                         duration=int(self.cfg.log.dt*1000))
 
+    def generate_random_pose(self):
+        # Random position within a reasonable range
+        pos = np.random.uniform(-0.5, 0.5, 3)
+        
+        # Random orientation using quaternions
+        quat = np.random.rand(4)
+        quat /= np.linalg.norm(quat)  # Normalize to ensure it's a valid quaternion
+        
+        return np.concatenate([pos, quat])
+
+    def initialize_objaverse(self):
+        # Get annotations from Objaverse
+        self.objaverse_annotations = oxl.get_annotations()
+        
+        # Create a directory for Objaverse meshes if it doesn't exist
+        meshes_dir = os.path.join(os.path.dirname(__file__), 'mpm', 'assets', 'meshes', 'objaverse')
+        os.makedirs(meshes_dir, exist_ok=True)
+        
+        # List of file extensions that Trimesh can process
+        processable_extensions = ['.obj', '.stl', '.ply', '.glb', '.gltf', '.dae', '.off']
+
+        while True:
+            try:
+                while True:
+                    sampled_object = self.objaverse_annotations.sample(1)
+                    object_url = sampled_object.iloc[0]['fileIdentifier']
+                    print(f"Trying object_url: {object_url}")
+
+                    # Check if the URL is from GitHub and has a processable extension
+                    if 'github.com' in object_url:
+                        file_extension = os.path.splitext(object_url)[1].lower()
+                        if file_extension in processable_extensions:
+                            break
+            
+                # Convert GitHub URL to raw content URL
+                if 'github.com' in object_url:
+                    object_url = object_url.replace('github.com', 'raw.githubusercontent.com')
+                    object_url = object_url.replace('/blob/', '/')
+                
+                print(f"Downloading from: {object_url}")
+                
+                # Generate a unique filename for the downloaded object
+                object_id = os.path.basename(object_url).split('?')[0]  # Remove query parameters if any
+                file_extension = os.path.splitext(object_id)[1]
+                if not file_extension:
+                    file_extension = '.glb'  # Default to .glb if no extension is present
+                
+                download_path = os.path.join(meshes_dir, f"{object_id}")
+                
+                # Use requests to download the file
+                response = requests.get(object_url, timeout=30)
+                response.raise_for_status()  # Raise an exception for bad status codes
+                
+                with open(download_path, 'wb') as f:
+                    f.write(response.content)
+                
+                # If we reach here, the download was successful
+                break  # Exit the outer while loop
+            
+            except Exception as e:
+                print(f"Error downloading object: {e}")
+                time.sleep(1)  # Wait a bit before trying again
+        
+        print(f"Successfully downloaded object from: {object_url}")
+
+        # Convert the downloaded file to OBJ format
+        obj_path = os.path.join(meshes_dir, f"{os.path.splitext(object_id)[0]}.obj")
+        self.convert_to_obj(download_path, obj_path)
+        
+        # Update the objaverse.yaml configuration
+        objaverse_config = self.cfg.entities.objaverse_object
+        objaverse_config.geom.file = f"sim/mpm/assets/meshes/objaverse/{os.path.splitext(object_id)[0]}.obj"
+        objaverse_config.objaverse_id = object_id
+        
+        print(f"Using Objaverse object: {object_url}")
+
+    # need bpy for fbx
+    def convert_to_obj(self, input_path, output_path):
+
+        # Load the mesh
+        mesh = trimesh.load(input_path)
+
+        # If the mesh is a scene, export all meshes
+        if isinstance(mesh, trimesh.Scene):
+            combined_mesh = trimesh.util.concatenate([
+                trimesh.Trimesh(vertices=m.vertices, faces=m.faces)
+                for m in mesh.geometry.values()
+            ])
+            combined_mesh.export(output_path)
+        else:
+            # Export the mesh as OBJ
+            mesh.export(output_path)
 
 @hydra.main(
     version_base=None,
@@ -225,3 +350,4 @@ def main(cfg):
 
 if  __name__== '__main__':
     main()
+

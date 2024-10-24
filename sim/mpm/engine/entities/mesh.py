@@ -37,6 +37,7 @@ class Mesh:
         if self.collision:
             self.processed_sdf_path = get_processed_sdf_path(self.raw_file, self.sdf_res)
         self.mesh = trimesh.load(self.processed_file_path)
+
         self.raw_vertices = np.ascontiguousarray(np.array(self.mesh.vertices, dtype=np.float32))
         self.raw_vertex_normals_np = np.ascontiguousarray(np.array(self.mesh.vertex_normals, dtype=np.float32))
         self.faces_np = np.ascontiguousarray(np.array(self.mesh.faces, dtype=np.int32)).flatten()
