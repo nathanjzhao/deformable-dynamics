@@ -154,3 +154,4 @@ ray/
 *.pkl
 *.pdf
 data/
+weights/
