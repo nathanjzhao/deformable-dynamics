@@ -4,8 +4,20 @@ defaults:
 - common
 - push
 
+wait: 0
 type: grasp
-
-from_offset: (0.0, 0.0, 0.0)  # override: no offset
-init_d: 0.5  # opening of gripper pre-grasp
-close_d: 0.0  # opening of gripper at grasp
+from_offset:
+- 0.0
+- 0.0
+- 0.0
+to_pos:
+- 0.0
+- 0.0
+- 0.0
+to_quat:
+- 0.96592583
+- 0.0
+- 0.0
+- 0.25881905
+init_d: 0.5
+close_d: 0.005

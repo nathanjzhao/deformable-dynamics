@@ -1,0 +1,21 @@
+defaults:
+- common
+- ../materials/dough@material
+
+geom:
+  type: mesh
+  file: null  # This will be populated programmatically with the Objaverse object file
+  scale: .249
+  pos: (0.0, 0.0, 0.125)
+  euler: (0.0, 0.0, 0.0)
+
+  # preprocessing
+  offset_pos: (0.0, 0.0, 0.0)
+  offset_euler: (0.0, 0.0, 0.0)
+
+material:
+  filling: jittered
+
+objaverse_id: null  # This will be populated programmatically
+
+enabled: true

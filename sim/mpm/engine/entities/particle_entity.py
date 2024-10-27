@@ -330,13 +330,33 @@ class ParticleEntity:
         else:
             voxels = pkl.load(open(voxelized_file_path, 'rb'))
 
+        # Get actual voxel grid dimensions
+        voxel_shape = np.array(voxels.shape)
+
         # sample a cube first
         cube_lower = pos - scale * 0.5
         cube_upper = pos + scale * 0.5
         positions = self._sample_cube(cube_lower, cube_upper, filling)
 
         # reject out-of-boundary particles
-        positions = positions[voxels.is_filled((positions - pos) / scale)]
+        # Map z from [0,1] to voxel grid coordinates
+        normalized_positions = positions - pos
+        normalized_positions = normalized_positions / scale + 0.5  # Map to [0,1]
+        normalized_positions = normalized_positions * (voxel_shape - 1)  # Map to voxel grid
+        normalized_positions = np.clip(normalized_positions, 0, voxel_shape - 1.001)
+        normalized_positions = normalized_positions.astype(int)
+        
+        # Filter positions that are within bounds
+        mask = (
+            (normalized_positions >= 0).all(axis=1) & 
+            (normalized_positions < (voxel_shape - 1)).all(axis=1)
+        )
+        valid_positions = normalized_positions[mask]
+        positions = positions[mask]
+        
+        # Further filter based on voxel occupancy
+        mask = np.array([voxels[tuple(p)] for p in valid_positions])
+        positions = positions[mask]
 
         return positions
     
@@ -357,3 +377,6 @@ class ParticleEntity:
         return f'{_repr(self)}\n' \
                f'id : {_repr_uuid(self.id)}\n' \
                f'n  : {_repr(self.n)}'
+
+
+
