@@ -575,6 +575,7 @@ class Topology:
         ee_width = self.cfg.ee.entities['finger_left']['geom']['scale'][1]
         ee_open = float(cur_ee_state[7])
 
+
         # == 1) check if the ee missed any component - if all are missed, no further checks are needed
         if not self.is_merged() and not self.is_split():  # no further checks needed
             all_missed = self.particle_graph.check_missed(particles, ee_pose, ee_width)

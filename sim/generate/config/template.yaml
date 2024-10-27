@@ -1,38 +1,20 @@
 defaults:
 - common
 - objects/ground@entities.ground
-- objects/supertoroid@entities.donut
+# - objects/supertoroid@entities.donut
 # - objects/cube@entities.left
 # - objects/roll@entities.right
 - ee/gripper@ee
-- actions/grasp@actions.grasp
+# - actions/grasp@actions.grasp
+- actions/random_grasp@actions.random_grasp
 - objects/objaverse@entities.objaverse_object
 - _self_
 
-scene_id: new  # TODO give each scene a unique id (string); will be the name of the folder in the dataset
+scene_id: scene_c8e8ed0f8b
+num_grasps: 5  # Number of random grasps to attempt
 
 render: true
 log:
   base_dir:  data/  # TODO set the path to the dataset
 check:
   horizon: ${eval:'${log.n_iter} * 10'}  # -1 deactivates topology check
-
-actions:
-  grasp:
-    wait: 0
-    type: grasp
-    from_offset:
-    - 0.0
-    - 0.0
-    - 0.0
-    to_pos:
-    - 0.0
-    - 0.0
-    - 0.0
-    to_quat:
-    - 0.96592583
-    - 0.0
-    - 0.0
-    - 0.25881905
-    init_d: 0.5
-    close_d: 0.005

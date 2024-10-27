@@ -8,8 +8,6 @@ from mpm.utils.mesh import *
 from scipy.spatial.transform import Rotation
 from mpm.utils.repr import _repr, _repr_uuid
 
-# Global variable for target particle count
-TARGET_PARTICLE_COUNT = 4163
 
 @ti.data_oriented
 class ParticleEntity:
@@ -74,24 +72,30 @@ class ParticleEntity:
     def save_ckpt(self):
         pass
 
-    def _sample_cube(self, lower, upper, filling, n_particles):
+    def _sample_cube(self, lower, upper, filling):
         size = upper - lower
         if filling == 'random':
+            volume = np.prod(size)
+            n_particles = self.compute_n_particles(volume)
             positions = np.random.uniform(low=lower, high=upper, size=(n_particles, 3))
         elif filling == 'grid':
-            n_per_dim = int(np.ceil(n_particles**(1/3)))
-            x = np.linspace(lower[0], upper[0], n_per_dim)
-            y = np.linspace(lower[1], upper[1], n_per_dim)
-            z = np.linspace(lower[2], upper[2], n_per_dim)
+            n_x = self.compute_n_particles_1D(size[0])
+            n_y = self.compute_n_particles_1D(size[1])
+            n_z = self.compute_n_particles_1D(size[2])
+            x = np.linspace(lower[0], upper[0], n_x+1)
+            y = np.linspace(lower[1], upper[1], n_y+1)
+            z = np.linspace(lower[2], upper[2], n_z+1)
             positions = np.stack(np.meshgrid(x, y, z, indexing='ij'), -1).reshape((-1, 3))
-            positions = positions[:n_particles]
         elif filling == 'jittered':
-            positions = self._sample_cube(lower, upper, 'grid', n_particles)
+            positions = self._sample_cube(lower, upper, 'grid')
             max_offset = self.particle_diameter/2  # in any direction
             positions += np.random.uniform(low=-max_offset, high=max_offset, size=positions.shape)
+
+            # clip to boundary
             positions = np.clip(positions, lower, upper)
         else:
             us.raise_exception(f'Unsupported filling type: {filling}.')
+
         return positions
 
     def instantiate(self, positions):
@@ -237,7 +241,6 @@ class ParticleEntity:
     def sample_cube(self):
         lower = np.array(self.geom.lower)
         filling = self.filling
-        target_particle_count = TARGET_PARTICLE_COUNT  # Set this to the expected number of particles
 
         if self.geom.size is not None:
             upper = lower + np.array(self.geom.size)
@@ -248,7 +251,7 @@ class ParticleEntity:
 
         if filling == 'natural':
             filling = 'grid' # for cube, natural is the same as grid
-        positions = self._sample_cube(lower, upper, filling, target_particle_count)
+        positions = self._sample_cube(lower, upper, filling)
 
         return positions
 
@@ -257,7 +260,6 @@ class ParticleEntity:
         radius  = self.geom.radius
         height  = self.geom.height
         filling = self.filling
-        target_particle_count = TARGET_PARTICLE_COUNT  # Set this to the expected number of particles
 
         if filling == 'natural':
             n_y = self.compute_n_particles_1D(height)
@@ -276,18 +278,11 @@ class ParticleEntity:
             # sample a cube first
             cube_lower = np.array([center[0] - radius, center[1] - height / 2.0, center[2] - radius])
             cube_upper = np.array([center[0] + radius, center[1] + height / 2.0, center[2] + radius])
-            positions = self._sample_cube(cube_lower, cube_upper, filling, target_particle_count)
+            positions = self._sample_cube(cube_lower, cube_upper, filling)
 
             # reject out-of-boundary particles
             positions_r = np.linalg.norm(positions[:, [0, 2]] - center[[0, 2]], axis=1)
             positions = positions[positions_r <= radius]
-
-        # If we have more particles than the target, randomly select the target number
-        if len(positions) > target_particle_count:
-            indices = np.random.choice(len(positions), target_particle_count, replace=False)
-            positions = positions[indices]
-        elif len(positions) < target_particle_count:
-            us.logger.warning(f"Not enough particles generated for cylinder. Expected {target_particle_count}, got {len(positions)}")
 
         return positions
     
@@ -298,12 +293,11 @@ class ParticleEntity:
         hole    = self.geom.hole
         e_lat   = self.geom.e_lat
         e_lon   = self.geom.e_lon
-        target_particle_count = TARGET_PARTICLE_COUNT  # Set this to the expected number of particles
 
         # sample a cube first
         cube_lower = -size/2
         cube_upper = size/2
-        positions = self._sample_cube(cube_lower, cube_upper, filling, target_particle_count)
+        positions = self._sample_cube(cube_lower, cube_upper, filling)
 
         # reject out-of-boundary particles
         x, y, z = positions[:, 0], positions[:, 1], positions[:, 2]
@@ -313,92 +307,57 @@ class ParticleEntity:
 
         positions += center
 
-        # If we have more particles than the target, randomly select the target number
-        if len(positions) > target_particle_count:
-            indices = np.random.choice(len(positions), target_particle_count, replace=False)
-            positions = positions[indices]
-        elif len(positions) < target_particle_count:
-            us.logger.warning(f"Not enough particles generated for supertoroid. Expected {target_particle_count}, got {len(positions)}")
-
         return positions
 
     def sample_mesh(self):
         filling      = self.filling
         file         = self.geom.file
         voxelize_res = self.geom.voxelize_res
-        scale        = np.array(self.geom.scale) if hasattr(self.geom.scale, '__iter__') else np.array([self.geom.scale]*3)
-        pos          = np.array(self.geom.pos) if hasattr(self.geom.pos, '__iter__') else np.array([0, 0, self.geom.pos])
-        target_particle_count = TARGET_PARTICLE_COUNT
+        scale        = np.array(self.geom.scale)
+        pos          = np.array(self.geom.pos)
 
         if filling == 'natural':
             filling = 'grid' # for mesh, natural is the same as grid
 
-        us.logger.debug(f"Attempting to get voxelized mesh path for file: {file}")
+        raw_file_path = get_raw_mesh_path(file)
         voxelized_file_path = get_voxelized_mesh_path(file, voxelize_res)
-        if voxelized_file_path is None:
-            us.logger.error(f"Failed to get voxelized mesh path for file: {file}")
-            us.raise_exception(f"Failed to get voxelized mesh path for file: {file}")
 
-        us.logger.debug(f"Voxelized mesh path obtained: {voxelized_file_path}")
+        if not os.path.exists(voxelized_file_path):
+            us.logger.debug(f'Voxelizing mesh {raw_file_path}.')
+            voxels = voxelize_mesh(raw_file_path, voxelize_res)
+            pkl.dump(voxels, open(voxelized_file_path, 'wb'))
+            us.logger.debug(f'Voxelized mesh saved as {voxelized_file_path}.')
+        else:
+            voxels = pkl.load(open(voxelized_file_path, 'rb'))
 
-        # Load the voxelized mesh data
-        with open(voxelized_file_path, 'rb') as f:
-            voxel_matrix = pickle.load(f)
+        # Get actual voxel grid dimensions
+        voxel_shape = np.array(voxels.shape)
 
-        voxel_shape = np.array(voxel_matrix.shape)
+        # sample a cube first
+        cube_lower = pos - scale * 0.5
+        cube_upper = pos + scale * 0.5
+        positions = self._sample_cube(cube_lower, cube_upper, filling)
 
-        # Adjust scale to fit within -0.4 to 0.4 for x and y
-        xy_scale = 0.8 / max(voxel_shape[0], voxel_shape[1])
-        scale = np.array([xy_scale, xy_scale, scale[2]])
-
-        # Adjust position
-        epsilon = 1e-4
-        pos[2] = max(pos[2], scale[2] * voxel_shape[2] / 2) + epsilon
-        pos[0] = pos[1] = 0
-
-        cube_lower = np.array([-0.4, -0.4, pos[2] - scale[2] * voxel_shape[2] / 2])
-        cube_upper = np.array([0.4, 0.4, pos[2] + scale[2] * voxel_shape[2] / 2])
+        # reject out-of-boundary particles
+        # Map z from [0,1] to voxel grid coordinates
+        normalized_positions = positions - pos
+        normalized_positions = normalized_positions / scale + 0.5  # Map to [0,1]
+        normalized_positions = normalized_positions * (voxel_shape - 1)  # Map to voxel grid
+        normalized_positions = np.clip(normalized_positions, 0, voxel_shape - 1.001)
+        normalized_positions = normalized_positions.astype(int)
         
-        oversampling_factor = 2
-        initial_particle_count = target_particle_count * oversampling_factor
-        positions = self._sample_cube(cube_lower, cube_upper, filling, initial_particle_count)
-
-        # Convert positions to voxel coordinates
-        voxel_coords = ((positions - cube_lower) / (cube_upper - cube_lower) * voxel_shape).astype(int)
-        voxel_coords = np.clip(voxel_coords, 0, voxel_shape - 1)
+        # Filter positions that are within bounds
+        mask = (
+            (normalized_positions >= 0).all(axis=1) & 
+            (normalized_positions < (voxel_shape - 1)).all(axis=1)
+        )
+        valid_positions = normalized_positions[mask]
+        positions = positions[mask]
         
-        # Check if any coordinates are out of bounds
-        valid_coords = np.all((voxel_coords >= 0) & (voxel_coords < voxel_shape), axis=1)
-        
-        # Only keep valid coordinates
-        voxel_coords = voxel_coords[valid_coords]
-        positions = positions[valid_coords]
-
-        # Use valid coordinates to index into voxel matrix
-        mask = voxel_matrix[voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]]
+        # Further filter based on voxel occupancy
+        mask = np.array([voxels[tuple(p)] for p in valid_positions])
         positions = positions[mask]
 
-        # Final check to ensure all particles are within bounds
-        solver_lower = np.array([-0.4, -0.4, epsilon])
-        solver_upper = np.array([0.4, 0.4, 1.0])
-        within_bounds = np.all((positions >= solver_lower) & (positions <= solver_upper), axis=1)
-        positions = positions[within_bounds]
-
-        # Adjust particle count to match TARGET_PARTICLE_COUNT
-        if len(positions) > TARGET_PARTICLE_COUNT:
-            indices = np.random.choice(len(positions), TARGET_PARTICLE_COUNT, replace=False)
-            positions = positions[indices]
-        elif len(positions) < TARGET_PARTICLE_COUNT:
-            us.logger.warning(f"Not enough particles generated. Expected {TARGET_PARTICLE_COUNT}, got {len(positions)}")
-            # If we don't have enough particles, we'll duplicate existing ones
-            additional_particles_needed = TARGET_PARTICLE_COUNT - len(positions)
-            additional_indices = np.random.choice(len(positions), additional_particles_needed, replace=True)
-            additional_positions = positions[additional_indices]
-            # Add small random offsets to avoid exact duplicates
-            additional_positions += np.random.uniform(-self.particle_diameter/100, self.particle_diameter/100, additional_positions.shape)
-            positions = np.vstack([positions, additional_positions])
-
-        us.logger.debug(f"Mesh sampling completed. Number of particles: {len(positions)}")
         return positions
     
     def sample_particles(self):
@@ -418,3 +377,6 @@ class ParticleEntity:
         return f'{_repr(self)}\n' \
                f'id : {_repr_uuid(self.id)}\n' \
                f'n  : {_repr(self.n)}'
+
+
+
