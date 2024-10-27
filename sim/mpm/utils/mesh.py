@@ -103,25 +103,24 @@ def get_voxelized_mesh_path(file, voxelize_res):
     # Create the directory if it doesn't exist
     os.makedirs(voxelized_dir, exist_ok=True)
 
-    if not os.path.exists(vox_path):
-        # Load the mesh
-        raw_mesh = load_mesh(file)
-        
-        if raw_mesh is None:
-            us.logger.error(f"Failed to load mesh from {file} for voxelization")
-            return None
-        
-        # Voxelize the mesh
-        voxelized_matrix = voxelize_mesh(raw_mesh, voxelize_res)
-        
-        if voxelized_matrix is None:
-            us.logger.error(f"Failed to voxelize mesh: {file}")
-            return None
-        
-        # Save the voxelized mesh as a pickle file
-        with open(vox_path, 'wb') as f:
-            pickle.dump(voxelized_matrix, f)
-        us.logger.debug(f"Voxelized mesh saved to {vox_path}")
+    # Load the mesh
+    raw_mesh = load_mesh(file)
+    
+    if raw_mesh is None:
+        us.logger.error(f"Failed to load mesh from {file} for voxelization")
+        return None
+    
+    # Voxelize the mesh
+    voxelized_matrix = voxelize_mesh(raw_mesh, voxelize_res)
+    
+    if voxelized_matrix is None:
+        us.logger.error(f"Failed to voxelize mesh: {file}")
+        return None
+    
+    # Save the voxelized mesh as a pickle file
+    with open(vox_path, 'wb') as f:
+        pickle.dump(voxelized_matrix, f)
+    us.logger.debug(f"Voxelized mesh saved to {vox_path}")
 
     return vox_path
 
@@ -170,6 +169,7 @@ def cleanup_mesh(mesh):
     '''
     Retain only mesh's vertices, faces, and normals.
     '''
+
     return trimesh.Trimesh(
         vertices       = mesh.vertices,
         faces          = mesh.faces,
@@ -179,21 +179,14 @@ def cleanup_mesh(mesh):
 
 def voxelize_mesh(mesh, voxelize_res):
     try:
-        # Normalize the mesh while preserving its aspect ratio
-        bounds = mesh.bounds
-        scale = np.max(bounds[1] - bounds[0])
-        center = np.mean(bounds, axis=0)
-        
-        normalized_mesh = mesh.copy()
-        normalized_mesh.apply_translation(-center)
-        normalized_mesh.apply_scale(1/scale)
+        # Normalize and cleanup the mesh
+        normalized_mesh = cleanup_mesh(normalize_mesh(mesh))
         
         # Voxelize the normalized mesh
-        voxel_grid = normalized_mesh.voxelized(pitch=1.0/voxelize_res, method='ray')
-        filled_voxels = voxel_grid.fill()
+        voxel_grid = normalized_mesh.voxelized(pitch=1.0/voxelize_res).fill()
         
-        # Convert to a 3D numpy array
-        voxel_matrix = filled_voxels.matrix
+        # Convert to numpy array
+        voxel_matrix = voxel_grid.matrix
         
         # Ensure the voxel matrix is 3D
         if voxel_matrix.ndim < 3:

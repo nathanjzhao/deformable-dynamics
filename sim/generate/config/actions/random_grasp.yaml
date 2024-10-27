@@ -1,0 +1,13 @@
+# Randomized grasp action
+
+defaults:
+- grasp  # Inherit from the base grasp action
+
+# Set grasp features to null
+wait: 0
+type: random_grasp
+from_offset: null
+to_pos: null
+to_quat: null
+init_d: null
+close_d: null

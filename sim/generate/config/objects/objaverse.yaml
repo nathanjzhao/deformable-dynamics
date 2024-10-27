@@ -5,9 +5,9 @@ defaults:
 geom:
   type: mesh
   file: null  # This will be populated programmatically with the Objaverse object file
-  scale: 1.0  # Adjust as needed
-  pos: (0.0, 0.0, 0.0)  # Adjust as needed
-  euler: (0.0, 0.0, 0.0)  # Adjust as needed
+  scale: .249
+  pos: (0.0, 0.0, 0.125)
+  euler: (0.0, 0.0, 0.0)
 
   # preprocessing
   offset_pos: (0.0, 0.0, 0.0)

@@ -53,7 +53,7 @@ augmentation:
     perlin_noise: False  # Perlin noise to get low-frequency displacement
     perlin_noise_res: 12  # in pixels, lower res creates more low-frequency noise -- max 12 for downsample=5
     perlin_noise_scale: 0.005  # in meters
-    voxel_size: 0.005  # in units, same for synthetic and real to reduce domain shift
+    voxel_size: 0.0001  # in units, same for synthetic and real to reduce domain shift
 # dataset
 dataset:
   n_points: 1024

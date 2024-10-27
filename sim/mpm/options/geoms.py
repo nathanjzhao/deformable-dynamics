@@ -47,7 +47,8 @@ class Mesh(Options):
     name         : str                 = 'mesh'
 
     # MPM specific
-    voxelize_res: int = 128
+    # voxelize_res: int = 128
+    voxelize_res: int = 256
 
     # Rigid specific
     mass              : float = 1.0

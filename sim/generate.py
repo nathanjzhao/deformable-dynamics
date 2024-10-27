@@ -25,6 +25,7 @@ import objaverse.xl as oxl  # Add this import
 import trimesh
 import requests
 import time
+from sklearn.decomposition import PCA
 
 
 class GenerationWorkspace:
@@ -58,8 +59,6 @@ class GenerationWorkspace:
         # get topology
         if self.cfg.check.horizon > 0:
             self.topology = Topology(self.cfg, self.scene, self.planner, self.entities)
-        # get plan
-        self.goals = ActionFactory.get_goals(self.cfg.actions)
 
         us.logger.info(f'=== Creating sequence {cfg.scene_id} in {cfg.log.base_dir} ===')
 
@@ -198,61 +197,101 @@ class GenerationWorkspace:
         return keyframe, log
 
     def run(self):
-        # reset simulation and state machine
         self.reset()
 
-        logs = []
-        frames = []
-        
-        num_grasps = 1  # Number of random grasps to attempt
+        num_grasps = self.cfg.num_grasps  # Number of random grasps to attempt
         
         for grasp_attempt in range(num_grasps):
-            # Generate a random pose
-            random_pose = self.generate_random_pose()
+            logs = []
+            frames = []
             
-            # Update the grasp action with the random pose
-            self.goals[0]['to_pos'] = random_pose[:3]
-            self.goals[0]['to_quat'] = random_pose[3:]
-            self.goals[0]['init_d'] = 1.5  # Start with open gripper
-            self.goals[0]['close_d'] = 0.0  # Fully close the gripper
+            if any(action == 'random_grasp' for action in self.cfg.actions):
+                self.generate_random_grasp_params()
             
-            # Reset the simulation for each grasp attempt
+            
+            self.goals = ActionFactory.get_goals(self.cfg.actions)
+            
             self.reset()
             
             for step in range(self.cfg.max_horizon):
-                # if plan is not done, step state machine and set new ee velocities
                 if self.planner.step(self.goals):
                     break
-                # step simulation
                 self.scene.step()
 
-                # check and log step
                 keyframe, log = self.check_and_log(step)
                 if keyframe is not None:
-                    frames += [keyframe]
+                    frames.append(keyframe)
                 if log is not None:
-                    logs += [log]
+                    logs.append(log)
             
             us.logger.info(f'=== Completed grasp attempt {grasp_attempt + 1}/{num_grasps} ===')
 
+            # Save logs
+            log_path = os.path.join(self.scene_dir, f"log_grasp_{grasp_attempt + 1}.pkl")
+            pickle.dump(logs, open(log_path, 'wb'))
+
+            # Save visualizations
+            if not DEBUG and self.cfg.render and frames:
+                us.logger.info(f'Saving visualization for grasp attempt {grasp_attempt + 1}.')
+                gif_path = os.path.join(self.scene_dir, f"visualization_grasp_{grasp_attempt + 1}.gif")
+                frames[0].save(gif_path, format="GIF", append_images=frames[1:], save_all=True, loop=0,
+                               duration=int(self.cfg.log.dt*1000))
+                
+                # Save initial and final frame screenshots
+                frames[0].save(os.path.join(self.scene_dir, f"initial_frame_grasp_{grasp_attempt + 1}.png"))
+                frames[-1].save(os.path.join(self.scene_dir, f"final_frame_grasp_{grasp_attempt + 1}.png"))
+
+            # Save initial and final state data
+            state_data = {
+                'initial_state': logs[0] if logs else None,
+                'final_state': logs[-1] if logs else None
+            }
+            state_data_path = os.path.join(self.scene_dir, f"state_data_grasp_{grasp_attempt + 1}.pkl")
+            with open(state_data_path, 'wb') as f:
+                pickle.dump(state_data, f)
+
+        # Save the object's OBJ file to the scene directory
+        if self.use_objaverse:
+            obj_source = os.path.join(os.path.dirname(__file__), 'mpm', 'assets', 'meshes', 'objaverse', 'objaverse_object.obj')
+            obj_dest = os.path.join(self.scene_dir, 'object.obj')
+            import shutil
+            shutil.copy2(obj_source, obj_dest)
+            
         us.logger.info(f'=== Done simulating all grasps for sequence {self.cfg.scene_id} ===')
 
-        us.logger.info(f'Saving logs.')
-        path = os.path.join(self.scene_dir, "log.pkl")
-        pickle.dump(logs, open(path, 'wb'))
-        if (not DEBUG and self.cfg.render):  # save frames as gif
-            us.logger.info(f'Saving visualization.')
-            frames[0].save(os.path.join(self.scene_dir, f"visualization.gif"),
-                        format="GIF", append_images=frames[1:], save_all=True, loop=0,
-                        duration=int(self.cfg.log.dt*1000))
+    def generate_random_grasp_params(self):
+        # Generate random values for grasp parameters
+        random_pose = self.generate_random_pose()
+        
+        # Update the grasp action in cfg.actions with random parameters
+        for action in self.cfg.actions:
+            if action == 'random_grasp':
+                self.cfg.actions[action] = {
+                    'wait': 0,
+                    'type': 'grasp',
+                    'from_offset': np.random.uniform(-0.01, 0.01, 3).tolist(),
+                    'to_pos': random_pose[:3].tolist(),
+                    'to_quat': random_pose[3:].tolist(),
+                    'init_d': float(np.random.uniform(0.4, 0.7)),
+                    'close_d': float(np.random.uniform(0.0, 0.1))
+                }
 
     def generate_random_pose(self):
         # Random position within a reasonable range
-        pos = np.random.uniform(-0.5, 0.5, 3)
+        pos = np.random.uniform(-0.01, 0.01, 3)
         
-        # Random orientation using quaternions
-        quat = np.random.rand(4)
-        quat /= np.linalg.norm(quat)  # Normalize to ensure it's a valid quaternion
+        # Random orientation using uniformly sampled quaternions
+        u1, u2, u3 = np.random.random(3)
+        
+        # Use the "subgroup algorithm" to generate uniform quaternions
+        sqrt1_u1 = np.sqrt(1 - u1)
+        sqrtu1 = np.sqrt(u1)
+        quat = np.array([
+            sqrt1_u1 * np.sin(2 * np.pi * u2),
+            sqrt1_u1 * np.cos(2 * np.pi * u2),
+            sqrtu1 * np.sin(2 * np.pi * u3),
+            sqrtu1 * np.cos(2 * np.pi * u3)
+        ])
         
         return np.concatenate([pos, quat])
 
@@ -278,8 +317,17 @@ class GenerationWorkspace:
                     if 'github.com' in object_url:
                         file_extension = os.path.splitext(object_url)[1].lower()
                         if file_extension in processable_extensions:
-                            break
-            
+                            # Check if the file name starts with "scene."
+                            file_name = os.path.basename(object_url).lower()
+                            if not file_name.startswith("scene."):
+                                break
+                            else:
+                                print("Skipping 'scene.*' file, sampling again...")
+                        else:
+                            print(f"Skipping file with unsupported extension: {file_extension}")
+                    else:
+                        print("Skipping non-GitHub URL, sampling again...")
+
                 # Convert GitHub URL to raw content URL
                 if 'github.com' in object_url:
                     object_url = object_url.replace('github.com', 'raw.githubusercontent.com')
@@ -293,7 +341,8 @@ class GenerationWorkspace:
                 if not file_extension:
                     file_extension = '.glb'  # Default to .glb if no extension is present
                 
-                download_path = os.path.join(meshes_dir, f"{object_id}")
+                # Use a consistent filename for the downloaded object
+                download_path = os.path.join(meshes_dir, f"objaverse_object{file_extension}")
                 
                 # Use requests to download the file
                 response = requests.get(object_url, timeout=30)
@@ -312,12 +361,42 @@ class GenerationWorkspace:
         print(f"Successfully downloaded object from: {object_url}")
 
         # Convert the downloaded file to OBJ format
-        obj_path = os.path.join(meshes_dir, f"{os.path.splitext(object_id)[0]}.obj")
+        obj_path = os.path.join(meshes_dir, "objaverse_object.obj")
         self.convert_to_obj(download_path, obj_path)
+        
+        # Try to load the mesh and check its properties
+        try:
+            mesh = trimesh.load(obj_path)
+            
+            # Check if it's a PointCloud or lacks necessary attributes
+            if isinstance(mesh, trimesh.PointCloud) or not hasattr(mesh, 'center_mass') or not hasattr(mesh, 'faces'):
+                print("Object is a PointCloud or lacks necessary attributes. Sampling a new object...")
+                return  # Go back to the start of the outer while loop
+            
+            # Check if the object is very thin using PCA
+            vertices = mesh.vertices - mesh.center_mass
+            pca = PCA(n_components=3)
+            pca.fit(vertices)
+            
+            # Get the ratio of the smallest variance to the largest
+            variance_ratio = pca.explained_variance_[2] / pca.explained_variance_[0]
+            
+            # You can adjust this threshold as needed
+            if variance_ratio < 0.01:  # Object is considered thin if the ratio is less than 1%
+                print("Object is too thin. Sampling a new object...")
+                return  # Go back to the start of the outer while loop
+
+        except Exception as e:
+            print(f"Error processing mesh: {e}. Sampling a new object...")
+            return  # Go back to the start of the outer while loop
+
+        # Remove the original file if it was converted to OBJ
+        if download_path != obj_path:
+            os.remove(download_path)
         
         # Update the objaverse.yaml configuration
         objaverse_config = self.cfg.entities.objaverse_object
-        objaverse_config.geom.file = f"sim/mpm/assets/meshes/objaverse/{os.path.splitext(object_id)[0]}.obj"
+        objaverse_config.geom.file = "sim/mpm/assets/meshes/objaverse/objaverse_object.obj"
         objaverse_config.objaverse_id = object_id
         
         print(f"Using Objaverse object: {object_url}")
