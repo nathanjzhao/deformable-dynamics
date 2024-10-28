@@ -47,12 +47,15 @@ class GenerationWorkspace:
 
         self.use_objaverse = 'entities' in cfg and 'objaverse_object' in cfg.entities
 
+        # Add new attribute
+        self.use_random_actions = False
+
         # Initialize Objaverse
         if self.use_objaverse:
             self.initialize_objaverse()
+        else:
+            self.scene, self.cam, self.entities, self.planner = get_scene(self.cfg)
 
-        # get scene
-        self.scene, self.cam, self.entities, self.planner = get_scene(self.cfg)
         if self.cfg.render:
             ti.set_logging_level(ti.WARN)
             self.font = ImageFont.truetype("Tests/fonts/NotoSans-Regular.ttf", 18)
@@ -102,6 +105,11 @@ class GenerationWorkspace:
                 us.logger.debug('Scene settled.')
             self.init_state = self.scene.get_state()
         self.scene.reset(self.init_state)
+
+        # Add collapse check after initial settling
+        if self.use_objaverse:
+            if self.check_mesh_collapse():
+                raise RuntimeError("Mesh collapsed during initialization")
 
         # reset topology
         if self.topology is not None:
@@ -198,16 +206,19 @@ class GenerationWorkspace:
 
     def run(self):
         self.reset()
-
-        num_grasps = self.cfg.num_grasps  # Number of random grasps to attempt
         
-        for grasp_attempt in range(num_grasps):
+        # Check for random grasp actions once at the start
+        self.use_random_actions = any(action == 'random_grasp' for action in self.cfg.actions)
+        original_actions = self.cfg.actions.copy() if self.use_random_actions else None
+        
+        for grasp_attempt in range(self.cfg.num_grasps):
             logs = []
             frames = []
             
-            if any(action == 'random_grasp' for action in self.cfg.actions):
+            # Restore original actions and generate new random grasps if needed
+            if self.use_random_actions:
+                self.cfg.actions = original_actions.copy()
                 self.generate_random_grasp_params()
-            
             
             self.goals = ActionFactory.get_goals(self.cfg.actions)
             
@@ -224,11 +235,21 @@ class GenerationWorkspace:
                 if log is not None:
                     logs.append(log)
             
-            us.logger.info(f'=== Completed grasp attempt {grasp_attempt + 1}/{num_grasps} ===')
+            us.logger.info(f'=== Completed grasp attempt {grasp_attempt + 1}/{self.cfg.num_grasps} ===')
 
             # Save logs
             log_path = os.path.join(self.scene_dir, f"log_grasp_{grasp_attempt + 1}.pkl")
             pickle.dump(logs, open(log_path, 'wb'))
+
+            # Save state data with actions
+            state_data = {
+                'initial_state': logs[0] if logs else None,
+                'final_state': logs[-1] if logs else None,
+                'actions': dict(self.cfg.actions)  # Add actions to the state data
+            }
+            state_data_path = os.path.join(self.scene_dir, f"state_data_grasp_{grasp_attempt + 1}.pkl")
+            with open(state_data_path, 'wb') as f:
+                pickle.dump(state_data, f)
 
             # Save visualizations
             if not DEBUG and self.cfg.render and frames:
@@ -241,15 +262,6 @@ class GenerationWorkspace:
                 frames[0].save(os.path.join(self.scene_dir, f"initial_frame_grasp_{grasp_attempt + 1}.png"))
                 frames[-1].save(os.path.join(self.scene_dir, f"final_frame_grasp_{grasp_attempt + 1}.png"))
 
-            # Save initial and final state data
-            state_data = {
-                'initial_state': logs[0] if logs else None,
-                'final_state': logs[-1] if logs else None
-            }
-            state_data_path = os.path.join(self.scene_dir, f"state_data_grasp_{grasp_attempt + 1}.pkl")
-            with open(state_data_path, 'wb') as f:
-                pickle.dump(state_data, f)
-
         # Save the object's OBJ file to the scene directory
         if self.use_objaverse:
             obj_source = os.path.join(os.path.dirname(__file__), 'mpm', 'assets', 'meshes', 'objaverse', 'objaverse_object.obj')
@@ -260,23 +272,48 @@ class GenerationWorkspace:
         us.logger.info(f'=== Done simulating all grasps for sequence {self.cfg.scene_id} ===')
 
     def generate_random_grasp_params(self):
-        # Generate random values for grasp parameters
-        random_pose = self.generate_random_pose()
+        # Ensure randomness by reseeding the random number generator
+        np.random.seed()  # Remove any fixed seed to ensure different results each time
+
+        # Get the number of actions to generate
+        num_actions = self.cfg.actions.random_grasp.number_of_actions_per_grasp
         
-        # Update the grasp action in cfg.actions with random parameters
-        for action in self.cfg.actions:
-            if action == 'random_grasp':
-                self.cfg.actions[action] = {
-                    'wait': 0,
-                    'type': 'grasp',
-                    'from_offset': np.random.uniform(-0.01, 0.01, 3).tolist(),
-                    'to_pos': random_pose[:3].tolist(),
-                    'to_quat': random_pose[3:].tolist(),
-                    'init_d': float(np.random.uniform(0.4, 0.7)),
-                    'close_d': float(np.random.uniform(0.0, 0.1))
-                }
+        # Create a list to store multiple actions
+        action_sequence = []
+        
+        # Generate the specified number of random grasps
+        for i in range(num_actions):
+            random_pose = self.generate_random_pose()
+            
+            # Create a new grasp action
+            grasp_action = {
+                'wait': 0,
+                'type': 'grasp',
+                'from_offset': np.random.uniform(-0.01, 0.01, 3).tolist(),
+                'to_pos': random_pose[:3].tolist(),
+                'to_quat': random_pose[3:].tolist(),
+                'init_d': float(np.random.uniform(0.4, 0.7)),
+                'close_d': float(np.random.uniform(0.0, 0.1))
+            }
+            
+            action_sequence.append(grasp_action)
+        
+        # Replace the single random_grasp in cfg.actions with the sequence
+        # First, remove the original random_grasp
+        actions_dict = dict(self.cfg.actions)
+        actions_dict.pop('random_grasp', None)
+        
+        # Add the sequence of actions with unique names
+        for i, action in enumerate(action_sequence):
+            actions_dict[f'random_grasp_{i+1}'] = action
+        
+        # Update the config
+        self.cfg.actions = actions_dict
 
     def generate_random_pose(self):
+
+        np.random.seed()  # Remove any fixed seed to ensure different results each time
+
         # Random position within a reasonable range
         pos = np.random.uniform(-0.01, 0.01, 3)
         
@@ -371,7 +408,8 @@ class GenerationWorkspace:
             # Check if it's a PointCloud or lacks necessary attributes
             if isinstance(mesh, trimesh.PointCloud) or not hasattr(mesh, 'center_mass') or not hasattr(mesh, 'faces'):
                 print("Object is a PointCloud or lacks necessary attributes. Sampling a new object...")
-                return  # Go back to the start of the outer while loop
+                self.initialize_objaverse()  # Go back to the start of the outer while loop
+                return
             
             # Check if the object is very thin using PCA
             vertices = mesh.vertices - mesh.center_mass
@@ -384,12 +422,13 @@ class GenerationWorkspace:
             # You can adjust this threshold as needed
             if variance_ratio < 0.01:  # Object is considered thin if the ratio is less than 1%
                 print("Object is too thin. Sampling a new object...")
-                return  # Go back to the start of the outer while loop
+                self.initialize_objaverse()
+                return
 
         except Exception as e:
             print(f"Error processing mesh: {e}. Sampling a new object...")
-            return  # Go back to the start of the outer while loop
-
+            self.initialize_objaverse()
+            return
         # Remove the original file if it was converted to OBJ
         if download_path != obj_path:
             os.remove(download_path)
@@ -398,6 +437,17 @@ class GenerationWorkspace:
         objaverse_config = self.cfg.entities.objaverse_object
         objaverse_config.geom.file = "sim/mpm/assets/meshes/objaverse/objaverse_object.obj"
         objaverse_config.objaverse_id = object_id
+
+        try:
+            scene, cam, entities, planner = get_scene(self.cfg)
+            self.scene = scene
+            self.cam = cam
+            self.entities = entities
+            self.planner = planner
+        except Exception as e:
+            print(f"Error initializing scene with Objaverse object: {e}")
+            self.initialize_objaverse()
+            return
         
         print(f"Using Objaverse object: {object_url}")
 
@@ -417,6 +467,41 @@ class GenerationWorkspace:
         else:
             # Export the mesh as OBJ
             mesh.export(output_path)
+
+    def check_mesh_collapse(self):
+        """Check if the mesh has collapsed by comparing its size before and after initial simulation."""
+        us.logger.info("Checking mesh collapse...")
+        
+        # Get initial bounding box
+        initial_positions = []
+        for entity in self.entities:
+            if entity.name == 'objaverse_object':
+                initial_positions = entity.get_state().pos.detach().cpu().numpy()
+                break
+        
+        if len(initial_positions) == 0:
+            return False
+
+        initial_bbox = np.ptp(initial_positions, axis=0)  # Range of points in each dimension
+        initial_volume = np.prod(initial_bbox)
+
+        # Simulate a few steps
+        for _ in range(10):  # Adjust number of steps as needed
+            self.scene.step()
+
+        # Get new bounding box
+        current_positions = []
+        for entity in self.entities:
+            if entity.name == 'objaverse_object':
+                current_positions = entity.get_state().pos.detach().cpu().numpy()
+                break
+
+        current_bbox = np.ptp(current_positions, axis=0)
+        current_volume = np.prod(current_bbox)
+
+        # Check if volume has significantly decreased
+        volume_ratio = current_volume / initial_volume
+        return volume_ratio < 0.5  # Adjust threshold as needed
 
 @hydra.main(
     version_base=None,

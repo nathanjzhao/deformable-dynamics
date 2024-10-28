@@ -1,7 +1,7 @@
 # Randomized grasp action
 
 defaults:
-- grasp  # Inherit from the base grasp action
+- grasp
 
 # Set grasp features to null
 wait: 0
@@ -11,3 +11,6 @@ to_pos: null
 to_quat: null
 init_d: null
 close_d: null
+
+# New parameter to control number of sequential actions
+number_of_actions_per_grasp: 3  # Default value, can be changed in config\
