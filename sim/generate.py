@@ -65,6 +65,12 @@ class GenerationWorkspace:
 
         us.logger.info(f'=== Creating sequence {cfg.scene_id} in {cfg.log.base_dir} ===')
 
+        # Convert the scene_id path to ensure proper directory structure
+        if cfg.scene_id is not None and '/' in cfg.scene_id:
+            # Create all necessary parent directories
+            parent_dir = os.path.join(cfg.log.base_dir, os.path.dirname(cfg.scene_id))
+            os.makedirs(parent_dir, exist_ok=True)
+
     @property
     def output_dir(self):
         return HydraConfig.get().runtime.output_dir
@@ -86,11 +92,20 @@ class GenerationWorkspace:
         if self.cfg.scene_id is None:
             us.logger.error('No scene_id specified. Adapt the config file.')
             sys.exit(-1)
+
+        # Handle scene_id with directory structure
         self.scene_dir = os.path.join(self.cfg.log.base_dir, self.cfg.scene_id)
+        
+        # Create all necessary parent directories
+        os.makedirs(os.path.dirname(self.scene_dir), exist_ok=True)
+        
         if os.path.exists(self.scene_dir):
             us.logger.warning(f'Scene directory {self.scene_dir} already exists. Overwriting.')
-        # save resolved config, including overrides and evals
+        
+        # Create the final scene directory
         os.makedirs(self.scene_dir, exist_ok=True)
+        
+        # save resolved config, including overrides and evals
         OmegaConf.save(self.cfg, os.path.join(self.scene_dir, 'config.yaml'))
         
         # reset simulation, ee and its state machine
@@ -201,8 +216,6 @@ class GenerationWorkspace:
         # log keyframe
         cur_ee_state = self.planner.ee.get_state()
         log = self.log(step, collision_info, cur_ee_state)
-
-        breakpoint()
 
         return keyframe, log
 
@@ -454,6 +467,8 @@ class GenerationWorkspace:
             self.planner = planner
         except Exception as e:
             print(f"Error initializing scene with Objaverse object: {e}")
+            breakpoint()
+            raise e
             self.initialize_objaverse()
             return
         

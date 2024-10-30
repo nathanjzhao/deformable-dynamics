@@ -10,11 +10,11 @@ defaults:
 - objects/objaverse@entities.objaverse_object
 - _self_
 
-scene_id: test
+scene_id: smaller_voxels/scene_b2f52ed272
 num_grasps: 5  # Number of random grasps to attempt
 
 render: true
 log:
-  base_dir:  data/  # TODO set the path to the dataset
+  base_dir:  data/
 check:
   horizon: ${eval:'${log.n_iter} * 10'}  # -1 deactivates topology check
