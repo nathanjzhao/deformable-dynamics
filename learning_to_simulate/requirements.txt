@@ -1,0 +1,12 @@
+absl-py
+graph-nets>=1.1
+tensorflow>=1.15,<2
+numpy
+dm-sonnet<2
+tensorflow_probability<0.9
+scikit-learn
+dm-tree
+matplotlib
+
+# pip install tensorflow==2.13.0 tensorflow-probability==0.21.0
+# pip install protobuf==3.20.1

@@ -1,0 +1,1 @@
+{"dim": 3, "sequence_length": 77, "default_connectivity_radius": 0.05, "bounds": [[-1, 1], [-1, 1], [-1, 1]], "vel_mean": [NaN, NaN, NaN], "vel_std": [NaN, NaN, NaN], "acc_mean": [0, 0, 0], "acc_std": [1, 1, 1]}
