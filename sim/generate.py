@@ -108,7 +108,7 @@ class GenerationWorkspace:
 
         # Add collapse check after initial settling
         if self.use_objaverse:
-            if self.check_mesh_collapse():
+            if self.check_mesh_collapse(self.scene, self.entities):
                 raise RuntimeError("Mesh collapsed during initialization")
 
         # reset topology
@@ -201,6 +201,8 @@ class GenerationWorkspace:
         # log keyframe
         cur_ee_state = self.planner.ee.get_state()
         log = self.log(step, collision_info, cur_ee_state)
+
+        breakpoint()
 
         return keyframe, log
 
@@ -440,6 +442,12 @@ class GenerationWorkspace:
 
         try:
             scene, cam, entities, planner = get_scene(self.cfg)
+
+            if self.check_mesh_collapse(scene, entities):
+                print("Mesh collapsed during initialization. Sampling a new object...")
+                self.initialize_objaverse()
+                return
+
             self.scene = scene
             self.cam = cam
             self.entities = entities
@@ -468,13 +476,13 @@ class GenerationWorkspace:
             # Export the mesh as OBJ
             mesh.export(output_path)
 
-    def check_mesh_collapse(self):
+    def check_mesh_collapse(self, scene, entities):
         """Check if the mesh has collapsed by comparing its size before and after initial simulation."""
         us.logger.info("Checking mesh collapse...")
         
         # Get initial bounding box
         initial_positions = []
-        for entity in self.entities:
+        for entity in entities:
             if entity.name == 'objaverse_object':
                 initial_positions = entity.get_state().pos.detach().cpu().numpy()
                 break
@@ -486,12 +494,12 @@ class GenerationWorkspace:
         initial_volume = np.prod(initial_bbox)
 
         # Simulate a few steps
-        for _ in range(10):  # Adjust number of steps as needed
-            self.scene.step()
+        for _ in range(100):  # Adjust number of steps as needed
+            scene.step()
 
         # Get new bounding box
         current_positions = []
-        for entity in self.entities:
+        for entity in entities:
             if entity.name == 'objaverse_object':
                 current_positions = entity.get_state().pos.detach().cpu().numpy()
                 break

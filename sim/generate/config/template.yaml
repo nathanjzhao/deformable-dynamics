@@ -10,7 +10,7 @@ defaults:
 - objects/objaverse@entities.objaverse_object
 - _self_
 
-scene_id: scene_434d752ff5
+scene_id: test
 num_grasps: 5  # Number of random grasps to attempt
 
 render: true

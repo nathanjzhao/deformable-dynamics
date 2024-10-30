@@ -60,6 +60,7 @@ for ((j=1; j<=num_objects; j++)); do
         mapfile -t gif_paths < <(run_simulation "$scene_id")
         
         if [ ${#gif_paths[@]} -gt 0 ]; then
+            echo "Successfully generated GIFs for $scene_id after $attempt attempts" >&2
             break
         else
             echo "Attempt $attempt failed for $scene_id. Retrying..." >&2
