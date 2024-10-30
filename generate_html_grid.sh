@@ -9,7 +9,7 @@ max_retries=3  # Maximum number of retries for each cell
 
 # Function to generate a random scene ID
 generate_scene_id() {
-    echo "scene_$(date +%s%N | md5sum | head -c 10)"
+    echo "render/scene_$(date +%s%N | md5sum | head -c 10)"
 }
 
 # Function to update scene_id in the YAML file
@@ -23,6 +23,10 @@ run_simulation() {
     local scene_id=$1
     
     update_scene_id "$scene_id"
+
+    # Create the dataset directory if it doesn't exist
+    mkdir -p "$data_dir/$dataset_name"
+    
     # Redirect stdout and stderr to /dev/null
     python sim/generate.py > /dev/null 2>&1
     
