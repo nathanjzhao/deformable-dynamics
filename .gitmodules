@@ -5,6 +5,3 @@
 [submodule "net/nvdiffrast"]
 	path = net/nvdiffrast
 	url = https://github.com/NVlabs/nvdiffrast.git
-[submodule "robocraft3d"]
-	path = robocraft3d
-	url = https://github.com/hshi74/robocraft3d.git
