@@ -155,3 +155,4 @@ ray/
 *.pdf
 data/
 weights/
+_scratch/
