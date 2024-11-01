@@ -10,7 +10,7 @@ defaults:
 - objects/objaverse@entities.objaverse_object
 - _self_
 
-scene_id: smaller_voxels/scene_9bc4b401fb
+scene_id: smaller_voxels/scene_0cfd16a821
 num_grasps: 5  # Number of random grasps to attempt
 
 render: true

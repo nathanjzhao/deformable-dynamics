@@ -20,13 +20,14 @@ Configure yaml file
 python sim/generate.py
 ```
 
-# train GNN
+
+<!-- # train GNN
 
 python version 3.6
 ```bash
-python -m learning_to_simulate.creaet_dataset.py
+python -m learning_to_simulate.create_dataset
 ```
 
 ```bash
 python -m learning_to_simulate.train.py --data_path formatted_data/train.tfrecord
-```
+``` -->
